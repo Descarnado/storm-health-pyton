@@ -35,6 +35,9 @@ def main(argv):
   p.add_option('-e', '--include-emitted', action='store_true', dest='include_emitted', help='Include bolt & spout emit statistics')
   p.add_option('-a', '--action', action='store', dest='action', help='Action to perform')
   p.add_option('-w', '--window', type="int", dest='window', help='Time window for metrics')
+  p.add_option('-m', '--metrics', action='store', type='string', dest='metrics', default=None, help='Metrics you want to get')
+  p.add_option('-t', '--topology', action='store', type='string', dest='topology', default=None, help='Certain topology you want to get info about')
+  p.add_option('-n', '--bsname', action='store', type='string', dest='bsname', default=None, help='Certain bolt or spout name you want to get info about')
 
   options, arguments = p.parse_args()
   options.protocol = 'https' if options.https else 'http'
@@ -44,7 +47,13 @@ def main(argv):
     return
 
   window = options.window
+  metrics = options.metrics
+  topology = options.topology
+  bsname = options.bsname
 
+  if window is not None and not (window == 600 or window == 10800 or window == 86400):
+    print ("Window parameter is not correctly setted!")
+    return
   #topologies = get_topologies(options)
   #bolts = get_bolts(topologies, options)
   #spouts = get_spouts(topologies, options)
@@ -52,10 +61,14 @@ def main(argv):
   #print_topology_count(topologies, options.host)
   if options.action is None:
     print_topologies_summary(options)
-  elif options.action == "boltsEmitted":
-    print_bos_emitted(options,"bolts", window)
-  elif options.action == "spoutsEmitted":
-    print_bos_emitted(options,"spouts", window)
+  elif options.action == "bolts":
+    print_bos_info(options,"bolts", topology, bsname, metrics, window)
+  elif options.action == "spouts":
+    print_bos_info(options,"spouts", topology, bsname, metrics, window)
+  elif options.action == "topology":
+    print_topology_info(options, topology, metrics, window)
+  elif options.action == "topologyStats":
+    print_topology_stats(options, topology, metrics, window)
   else:
     print_topologies_summary(options)
   #print_capacity(bolts, options.host)
@@ -68,6 +81,11 @@ def get_topologies(options):
   url = getUrl(options.host, 'topologies', options.protocol, None)
   res = make_request(url, options)
   return res['topologies']
+
+def get_topology(options, topologyId):
+  url = getUrl(options.host, 'topology', options.protocol, options.window) % {'id': topologyId}
+  res = make_request(url, options)
+  return res
 
 def get_bolts(topologies, options, window):
   bolts = []
@@ -153,16 +171,50 @@ def print_topologies_summary(options):
 
   print(resultStr);
 
-def print_bos_emitted(options, boltsOrSpouts, window):
+def print_topology_info(options, topology, metrics, window):
   tops = get_topologies(options)
-  arr = get_bolts(tops, options, window) if boltsOrSpouts == "bolts"  else get_spouts (tops, options, window)
+
+  if topology is not None:
+    tops = filter(lambda t: t['name'] == topology, tops)
+
+  arr = map(lambda tplg: get_topology(options, tplg['id']), tops)
+
+  print(sum(map(lambda a: a[metrics], arr)));
+
+def print_topology_stats(options, topology, metrics, window):
+  tops = get_topologies(options)
+
+  if topology is not None:
+    tops = filter(lambda t: t['name'] == topology, tops)
+
+  arr = map(lambda tplg: get_topology(options, tplg['id']), tops)
+  arr = map(lambda t: t['topologyStats'], arr)
   
-  resultEmitted = 0
+  statsByTime = []
+  for x in arr:
+    statsByTime += x
 
-  for ar in arr:
-    resultEmitted += ar['emitted']
+  statsByTime = filter(lambda x: x['window'] == str(window) if window is not None else x['window'] == ':all-time', statsByTime)
 
-  print(resultEmitted);
+  print(sum(map(lambda a: int(a[metrics]) if a[metrics] is not None else 0, statsByTime)));
+
+def print_bos_info(options, boltsOrSpouts, topology, bsname, metrics, window):
+  #Получаем список всех доступных топологий
+  tops = get_topologies(options)
+  #Если указанно имя конкретной топологии, то отсекаем все остальные топологии по имени.
+  if topology is not None:
+    tops = filter(lambda t: t['name'] == topology, tops)
+  #В зависимости от параметра boltsOrSpouts получаем все спауты или болты у топологий из массива tops
+  arr = get_bolts(tops, options, window) if boltsOrSpouts == "bolts"  else get_spouts (tops, options, window)
+  #Если указано имя конкретного болта или спаута, то откидываем остальные, у которых не совпадает имя
+  if bsname is not None:
+    arr = filter(lambda a: a['boltId'] == bsname if boltsOrSpouts == "bolts" else a['spoutId'] == bsname, arr)
+  #Если не указано название желаемой метрики, то показываем соответствующее сообщение
+  if metrics is None:
+    print ('Metrics is not specified! Read help.')
+    return
+  #Выводим сумму метрики
+  print(sum(map(lambda a: a[metrics], arr)));
 
 #
 # main app
